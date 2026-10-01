@@ -3,6 +3,7 @@ name: Build data and deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request:
   schedule:
     - cron: '0 3 * * 1'
   workflow_dispatch:
@@ -13,7 +14,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
   cancel-in-progress: false
 
 env:
@@ -81,12 +82,15 @@ jobs:
         run: npm run build
 
       - uses: actions/configure-pages@v5
+        if: github.event_name != 'pull_request'
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
           path: web/build
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
