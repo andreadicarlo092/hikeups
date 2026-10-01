@@ -1,0 +1,6 @@
+etl/cache/
+etl/out/
+etl/full.log
+__pycache__/
+*.pyc
+.venv/
