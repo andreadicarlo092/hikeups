@@ -49,27 +49,41 @@
 		);
 	}
 
+	let trailheadRequest: AbortController | null = null;
+
 	async function openTrailhead(id: number, fly = false) {
+		trailheadRequest?.abort();
+		const request = new AbortController();
+		trailheadRequest = request;
 		panelOpen = true;
 		loading = true;
 		error = null;
 		selectedTrailId = null;
 		try {
-			const res = await fetch(assetUrl(`/data/trailheads/${id}.json`));
+			const res = await fetch(assetUrl(`/data/trailheads/${id}.json`), { signal: request.signal });
 			if (!res.ok) throw new Error(String(res.status));
-			trailhead = (await res.json()) as Trailhead;
+			const data = (await res.json()) as Trailhead;
+			if (request.signal.aborted) return;
+			trailhead = data;
 			setUrl(id);
-			if (fly && map) map.flyTo({ center: [trailhead.lng, trailhead.lat], zoom: 13 });
+			if (fly && map) map.flyTo({ center: [data.lng, data.lat], zoom: 13 });
 		} catch {
+			if (request.signal.aborted) return;
 			trailhead = null;
 			error = 'Impossibile caricare questo punto di partenza.';
 		} finally {
-			loading = false;
-			applyFilters();
+			if (trailheadRequest === request) {
+				trailheadRequest = null;
+				loading = false;
+				applyFilters();
+			}
 		}
 	}
 
 	function closePanel() {
+		trailheadRequest?.abort();
+		trailheadRequest = null;
+		loading = false;
 		panelOpen = false;
 		trailhead = null;
 		selectedTrailId = null;
