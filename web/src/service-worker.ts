@@ -2,11 +2,14 @@
 /// <reference no-default-lib="true"/>
 /// <reference lib="esnext" />
 /// <reference lib="webworker" />
-import { build, version } from '$service-worker';
+import { base, build, version } from '$service-worker';
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE = `shell-${version}`;
-const SHELL = [...build, '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png'];
+const SHELL = [
+	...build,
+	...['/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png'].map((p) => base + p)
+];
 
 sw.addEventListener('install', (event) => {
 	event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
@@ -29,7 +32,7 @@ sw.addEventListener('fetch', (event) => {
 		return;
 	}
 	// Trail data and pages: network first, cached copy when offline on the trail.
-	if (req.mode === 'navigate' || url.pathname.startsWith('/data/')) {
+	if (req.mode === 'navigate' || url.pathname.startsWith(`${base}/data/`)) {
 		event.respondWith(
 			fetch(req)
 				.then((res) => {

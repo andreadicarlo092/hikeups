@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { base } from '$app/paths';
 	import DifficultyBadge from '$lib/components/DifficultyBadge.svelte';
 	import ElevationChart from '$lib/components/ElevationChart.svelte';
 	import TrailMap from '$lib/components/TrailMap.svelte';
@@ -20,7 +21,7 @@
 		`${meta.difficulty ?? '?'} · ${formatKm(meta.length_km)} · ↗ ${formatMeters(meta.elevation_gain_m)} · ${formatDuration(meta.duration_hours)}` +
 			(meta.trailheads.length ? ` · partenza da ${meta.trailheads[0].name}` : '')
 	);
-	const backHref = $derived(meta.trailheads.length ? `/?th=${meta.trailheads[0].id}` : '/');
+	const backHref = $derived(meta.trailheads.length ? `${base}/?th=${meta.trailheads[0].id}` : `${base}/`);
 
 	onMount(async () => {
 		try {
@@ -114,7 +115,7 @@
 			<h2 id="th-h">Punti di partenza</h2>
 			<ul>
 				{#each meta.trailheads as th (th.id)}
-					<li><a href={`/?th=${th.id}`}>{th.name}</a></li>
+					<li><a href={`${base}/?th=${th.id}`}>{th.name}</a></li>
 				{/each}
 			</ul>
 		</section>

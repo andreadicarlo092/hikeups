@@ -6,6 +6,7 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		adapter: adapter({ fallback: '404.html', precompress: false }),
+		paths: { base: process.env.BASE_PATH ?? '' },
 		prerender: { crawl: false, concurrency: 8 }
 	}
 };

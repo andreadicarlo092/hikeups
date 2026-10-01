@@ -66,7 +66,9 @@ Config (`web/.env`, see `.env.example`): `PUBLIC_STYLE_URL`, `PUBLIC_FALLBACK_ST
 
 ## Deploying (≈ €0–10/month)
 
-- `web/build/` is a plain static site → any static host (Cloudflare Pages, Netlify, an object-storage bucket + CDN, or Caddy on a small VPS).
+- **GitHub Pages (default):** `.github/workflows/deploy.yml` runs the full weekly job on a GitHub runner (on push to `main`, every Monday 03:00 UTC, or manually) and publishes `web/build/` to `https://<owner>.github.io/<repo>/`. One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
+- The app can live under a sub-path: set `BASE_PATH=/<repo>` at build time (empty for a root domain).
+- `web/build/` is a plain static site → any other static host works too (Netlify, an object-storage bucket + CDN, or Caddy on a small VPS). Cloudflare Pages' 20k-file limit is too small for the ~21k files.
 - The host must support HTTP **Range** requests for `.pmtiles` (all of the above do).
 - Data changes weekly: `Cache-Control: public, max-age=86400` on `/data` and `/tiles`.
 - Prerendering every trail page needs the data at build time, so the weekly job is: `download.sh → build.py → sync-data.sh → npm run build → upload`.

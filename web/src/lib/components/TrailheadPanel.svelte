@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import DifficultyBadge from './DifficultyBadge.svelte';
 	import { formatDuration, formatKm, formatMeters } from '$lib/format';
 	import type { Trailhead, TrailSummary } from '$lib/types';
@@ -63,7 +64,7 @@
 						</span>
 					</button>
 					{#if trail.id === selectedTrailId}
-						<a class="btn open" href={`/trails/${trail.id}`}>Apri scheda sentiero →</a>
+						<a class="btn open" href={`${base}/trails/${trail.id}`}>Apri scheda sentiero →</a>
 					{/if}
 				</li>
 			{/each}
