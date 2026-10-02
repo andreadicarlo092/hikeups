@@ -1,0 +1,45 @@
+name: ETL and Deploy
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: System deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y osmium-tool gdal-bin libsqlite3-dev zlib1g-dev
+          curl -fsSL https://github.com/felt/tippecanoe/archive/refs/tags/2.52.0.tar.gz | tar xz
+          cd tippecanoe-2.52.0 && make -j4 && sudo make install
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r etl/requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: etl/cache
+          key: etl-cache-${{ hashFiles('etl/download.sh') }}
+      - run: bash etl/download.sh
+      - run: cd etl && python build.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cd web && npm ci
+      - run: cd web && bash scripts/sync-data.sh
+      - run: cd web && npm run build
+        env:
+          PUBLIC_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
+          PUBLIC_FALLBACK_STYLE_URL: https://tiles.openfreemap.org/styles/positron
+      - name: Deploy to Vercel
+        if: ${{ env.VERCEL_TOKEN != '' }}
+        run: npx vercel deploy web/build --prod --yes --token=$VERCEL_TOKEN
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: team_o8ssSERkMLPyQLblgLK8Uu39
+          VERCEL_PROJECT_ID: prj_d51aNvLMKjm8uVaMstHH8LEEUPFJ
