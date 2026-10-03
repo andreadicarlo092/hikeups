@@ -44,7 +44,7 @@ jobs:
         run: |
           echo "::notice::files=$(find web/build -type f | wc -l) size=$(du -sh web/build | cut -f1) big=$(find web/build -type f -size +90M | tr '\n' ' ')"
           set +e
-          npx vercel deploy web/build --prod --yes --token=$VERCEL_TOKEN > deploy.log 2>&1
+          npx vercel deploy web/build --prod --yes --archive=tgz --token=$VERCEL_TOKEN > deploy.log 2>&1
           code=$?
           cat deploy.log
           if [ $code -ne 0 ]; then echo "::error::$(tail -n 15 deploy.log | tr '\n' ' ')"; fi
