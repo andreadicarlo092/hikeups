@@ -156,6 +156,9 @@
 						<div class="cell">
 							<dt>Dislivello</dt>
 							<dd class="big">{formatGain(trail.dislivello_pos)}</dd>
+							{#if trail.dislivello_neg !== null && trail.dislivello_neg >= 50}
+								<span class="cap">{formatLoss(trail.dislivello_neg)} in discesa</span>
+							{/if}
 						</div>
 					</dl>
 					<p class="phrase">{trail.tldr.frase}</p>
@@ -171,7 +174,7 @@
 					<section>
 						<h3>Descrizione</h3>
 						<ul class="desc">
-							{#each trail.descrizione as frase}
+							{#each trail.descrizione.filter((f) => f !== SAC_WARNING) as frase}
 								<li>{frase}</li>
 							{/each}
 						</ul>
@@ -244,11 +247,14 @@
 											<span aria-hidden="true">›</span>
 										</button>
 									{:else}
-										<div class="link-row static">
+										<div class="link-row static" title="Questo sentiero non fa parte di quelli del pilota">
 											<DifficultyBadge difficulty={c.difficolta} />
 											<span class="lt">
 												<b>{c.nome ?? `Sentiero ${c.ref ?? ''}`}{#if c.ref && c.nome} · {c.ref}{/if}</b>
-												<span class="meta">{formatAtKm(c.km_dal_via)}</span>
+												<span class="meta">
+													{formatAtKm(c.km_dal_via)}
+													<span class="nolink">· scheda non disponibile (fuori dal pilota)</span>
+												</span>
 											</span>
 										</div>
 									{/if}
@@ -545,6 +551,9 @@
 	}
 	.link-row.static {
 		cursor: default;
+	}
+	.link-row.static .nolink {
+		font-style: italic;
 	}
 	.lt {
 		flex: 1;

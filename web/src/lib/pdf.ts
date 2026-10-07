@@ -7,7 +7,7 @@ import {
 	difficultyKey,
 	difficultyText
 } from './difficulty';
-import { formatAtKm, formatGain, formatMinutesShort, kmNumber, slugify } from './format';
+import { formatAtKm, formatGain, formatLoss, formatMinutesShort, kmNumber, slugify } from './format';
 import type { TrailDetail } from './types';
 
 /** jsPDF usa i font standard (WinAnsi): togliamo i caratteri che non esistono. */
@@ -112,7 +112,12 @@ export async function downloadTrailPdf(t: TrailDetail): Promise<void> {
 		{ big: difficultyText(t.difficolta), label: 'DIFFICOLTÀ', sub: DIFFICULTY_LABELS[key] },
 		{ big: formatMinutesShort(t.durata_min), label: t.anello ? 'GIRO COMPLETO' : 'SALITA' },
 		{ big: kmNumber(t.km), label: t.km_stimato ? 'KM (STIMATI)' : 'DISTANZA KM' },
-		{ big: formatGain(t.dislivello_pos), label: 'DISLIVELLO IN SALITA' }
+		{
+			big: formatGain(t.dislivello_pos),
+			label: 'DISLIVELLO IN SALITA',
+			// stessa fonte e stesso valore della scheda: dislivello_neg, senza arrotondamenti
+			sub: t.dislivello_neg !== null && t.dislivello_neg >= 50 ? `${formatLoss(t.dislivello_neg)} in discesa` : undefined
+		}
 	];
 	cols.forEach((c, i) => {
 		const cx = M + colW * i + colW / 2;
@@ -146,6 +151,10 @@ export async function downloadTrailPdf(t: TrailDetail): Promise<void> {
 			text(c.label, cx, y + boxH - 2, { align: 'center' });
 		} else {
 			text(c.label, cx, y + 40, { align: 'center' });
+			if (c.sub) {
+				doc.setFont('helvetica', 'normal');
+				text(c.sub, cx, y + 44.5, { align: 'center' });
+			}
 		}
 	});
 	y += boxH + 8;
