@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
-# Copy ETL artifacts into the web app's static dir (local dev / static hosting).
-# In production, upload etl/out/{data,tiles} to object storage + CDN instead and set PUBLIC_ASSET_BASE.
+# Copia i dati del pilota in web/static/data.
+# Uso: scripts/sync-data.sh [cartella_out]
+# Default: /workspace/media/pilot/out se esiste, altrimenti etl/out.
+# Accetta sia il formato dell'ETL del pilota (trailheads.json, th/, trail/)
+# sia quello dello schema (trailheads.json, trailheads/, trails/).
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-out="${1:-$here/../etl/out}"
-rm -rf "$here/static/data" "$here/static/tiles"
-cp -r "$out/data" "$here/static/data"
-cp -r "$out/tiles" "$here/static/tiles"
-echo "synced $(ls "$here/static/data/trails" | grep -c json) trails, $(ls "$here/static/data/trailheads" | wc -l) trailheads"
+src="${1:-}"
+if [ -z "$src" ]; then
+	if [ -d /workspace/media/pilot/out ]; then src=/workspace/media/pilot/out
+	else src="$here/../etl/out"; fi
+fi
+rm -rf "$here/static/data"
+mkdir -p "$here/static/data/trailheads" "$here/static/data/trails"
+cp "$src/trailheads.json" "$here/static/data/trailheads.json"
+[ -f "$src/search.json" ] && cp "$src/search.json" "$here/static/data/search.json"
+for pair in "th:trailheads" "trailheads:trailheads" "trail:trails" "trails:trails"; do
+	from="${pair%%:*}"
+	to="${pair##*:}"
+	if [ -d "$src/$from" ]; then cp -r "$src/$from"/. "$here/static/data/$to/"; fi
+done
+echo "copiati $(ls "$here/static/data/trails" | wc -l) sentieri e $(ls "$here/static/data/trailheads" | wc -l) punti da $src"

@@ -1,36 +1,49 @@
-import type { Difficulty } from './types';
+import type { Difficulty, DifficultyKey } from './types';
 
-export const DIFFICULTY_COLORS: Record<Difficulty | '?', string> = {
-	T: '#15803d',
-	E: '#1d4ed8',
-	EE: '#b91c1c',
-	EEA: '#111827',
-	'?': '#6b7280'
+/** Colori scala CAI (schema §4). Testo sempre bianco. */
+export const DIFFICULTY_COLORS: Record<DifficultyKey, string> = {
+	T: '#2E9E4F',
+	E: '#1F6FD6',
+	EE: '#D62F2F',
+	EEA: '#111111',
+	nd: '#8A8F98'
 };
 
-export const DIFFICULTY_LABELS: Record<Difficulty | '?', string> = {
+export const DIFFICULTY_LABELS: Record<DifficultyKey, string> = {
 	T: 'Turistico',
 	E: 'Escursionistico',
 	EE: 'Escursionisti Esperti',
-	EEA: 'Esperti con Attrezzatura',
-	'?': 'Difficoltà non indicata'
+	EEA: 'Escursionisti Esperti con Attrezzatura',
+	nd: 'Difficoltà non disponibile'
 };
 
-export function difficultyKey(d: Difficulty | null): Difficulty | '?' {
-	return d ?? '?';
+/** Frase breve: tooltip e descrizione. */
+export const DIFFICULTY_SHORT: Record<DifficultyKey, string> = {
+	T: 'percorso facile, adatto a tutti.',
+	E: 'sentiero escursionistico, serve un buon passo e scarponi.',
+	EE: 'per escursionisti esperti, con tratti esposti.',
+	EEA: 'per escursionisti esperti con attrezzatura, con tratti di ferrata.',
+	nd: 'difficoltà non disponibile.'
+};
+
+/** Spiegazione in italiano semplice: modale, legenda, PDF. */
+export const DIFFICULTY_LONG: Record<DifficultyKey, string> = {
+	T: 'Percorso facile su stradine, mulattiere o sentieri ben tracciati. Pochi dislivelli. Bastano scarpe comode.',
+	E: "Sentiero in montagna, anche ripido o con sassi. Non ci sono passaggi difficili. Servono scarponi, un po' di allenamento e abitudine a camminare in salita.",
+	EE: 'Percorso impegnativo: può avere tratti ripidi, esposti o su roccia, dove usi anche le mani. Serve esperienza, equilibrio, assenza di vertigini e scarponi adatti.',
+	EEA: 'Percorso con tratti di ferrata, con cavi o scale. Servono casco, imbracatura e kit da ferrata, oltre a esperienza e buona preparazione fisica. Se non sei esperto, vai con una guida.',
+	nd: 'Informazione non disponibile, puoi completarla su OpenStreetMap.'
+};
+
+export const DIFFICULTY_ORDER: Difficulty[] = ['T', 'E', 'EE', 'EEA'];
+
+export const SAC_WARNING = 'Difficoltà stimata dai dati OSM: controlla sul posto.';
+
+export function difficultyKey(d: Difficulty | null | undefined): DifficultyKey {
+	return d ?? 'nd';
 }
 
-/** MapLibre `match` expression colouring lines by the `difficulty` tile property. */
-export const difficultyColorExpression = [
-	'match',
-	['get', 'difficulty'],
-	'T',
-	DIFFICULTY_COLORS.T,
-	'E',
-	DIFFICULTY_COLORS.E,
-	'EE',
-	DIFFICULTY_COLORS.EE,
-	'EEA',
-	DIFFICULTY_COLORS.EEA,
-	DIFFICULTY_COLORS['?']
-] as const;
+/** Sigla da mostrare nei badge ("n.d." se mancante). */
+export function difficultyText(d: Difficulty | null | undefined): string {
+	return d ?? 'n.d.';
+}

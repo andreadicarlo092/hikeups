@@ -3,355 +3,335 @@
 	import {
 		AttributionControl,
 		GeolocateControl,
+		LngLatBounds,
 		Map as MlMap,
 		NavigationControl,
-		type ExpressionSpecification,
+		type GeoJSONSource,
 		type MapGeoJSONFeature,
 		type MapLayerMouseEvent
 	} from 'maplibre-gl';
+	import SearchBar from '$lib/components/SearchBar.svelte';
 	import TrailheadPanel from '$lib/components/TrailheadPanel.svelte';
-	import { DATA_ATTRIBUTION, LOMBARDIA_BOUNDS, absoluteAssetUrl, assetUrl } from '$lib/config';
-	import { DIFFICULTY_COLORS, DIFFICULTY_LABELS, difficultyColorExpression } from '$lib/difficulty';
+	import TrailModal from '$lib/components/TrailModal.svelte';
+	import TypeIcon from '$lib/components/TypeIcon.svelte';
+	import { ATTRIBUTIONS, DATA_ATTRIBUTION, PILOT_BOUNDS } from '$lib/config';
+	import { loadIndex, loadSearchExtra, loadTrail, loadTrailhead } from '$lib/data';
+	import { TRAILHEAD_TYPES, TYPE_COLORS, TYPE_LABELS, drawMapIcon, iconKind } from '$lib/icons';
 	import { initMapLibre, resolveStyleUrl } from '$lib/map';
-	import type { Trailhead, TrailSummary } from '$lib/types';
+	import { buildSearchItems, type SearchItem } from '$lib/search';
+	import type { TrailDetail, Trailhead, TrailheadIndex, TrailheadPoint, TrailListItem } from '$lib/types';
 
 	let container: HTMLDivElement;
 	let map: MlMap | undefined;
+	let index: TrailheadIndex | null = $state(null);
+	let indexError: string | null = $state(null);
+	let searchItems: SearchItem[] = $state([]);
+
+	let point: TrailheadPoint | null = $state(null);
 	let trailhead: Trailhead | null = $state(null);
-	let panelOpen = $state(false);
-	let loading = $state(false);
-	let error: string | null = $state(null);
-	let selectedTrailId: number | null = $state(null);
+	let thLoading = $state(false);
+	let thError: string | null = $state(null);
 
-	const NONE: ExpressionSpecification = ['==', ['get', 'id'], -1];
+	let modalOpen = $state(false);
+	let trail: TrailDetail | null = $state(null);
+	let trailLoading = $state(false);
+	let trailError: string | null = $state(null);
 
-	function setUrl(thId: number | null) {
+	let thRequest: AbortController | null = null;
+	let trailRequest: AbortController | null = null;
+
+	const SRC = 'trailheads';
+
+	function setUrl(params: Record<string, string | null>) {
 		const url = new URL(location.href);
-		if (thId === null) url.searchParams.delete('th');
-		else url.searchParams.set('th', String(thId));
+		for (const [k, v] of Object.entries(params)) {
+			if (v === null) url.searchParams.delete(k);
+			else url.searchParams.set(k, v);
+		}
 		history.replaceState(history.state, '', url);
 	}
 
-	function applyFilters() {
-		if (!map?.getLayer('trails-trailhead')) return;
-		const ids = trailhead?.trails.map((t) => t.id) ?? [];
-		map.setFilter(
-			'trails-trailhead',
-			ids.length ? ['in', ['get', 'id'], ['literal', ids]] : NONE
-		);
-		map.setFilter(
-			'trails-selected',
-			selectedTrailId !== null ? ['==', ['get', 'id'], selectedTrailId] : NONE
-		);
-		map.setFilter(
-			'trailheads-selected',
-			trailhead ? ['==', ['get', 'id'], trailhead.id] : NONE
-		);
+	function highlight() {
+		if (!map?.getLayer('th-selected')) return;
+		map.setFilter('th-selected', ['==', ['get', 'id'], point?.id ?? '']);
 	}
 
-	let trailheadRequest: AbortController | null = null;
+	function focusPoint(p: { lat: number; lon: number }) {
+		if (!map) return;
+		const narrow = window.matchMedia('(max-width: 767px)').matches;
+		map.flyTo({
+			center: [p.lon, p.lat],
+			zoom: Math.max(map.getZoom(), 13),
+			padding: narrow ? { bottom: Math.round(window.innerHeight * 0.3), top: 0, left: 0, right: 0 } : { left: 200, top: 0, right: 0, bottom: 0 }
+		});
+	}
 
-	async function openTrailhead(id: number, fly = false) {
-		trailheadRequest?.abort();
-		const request = new AbortController();
-		trailheadRequest = request;
-		panelOpen = true;
-		loading = true;
-		error = null;
-		selectedTrailId = null;
+	async function openPoint(id: string, fly = true) {
+		const p = index?.punti.find((x) => x.id === id);
+		if (!p) return;
+		thRequest?.abort();
+		const req = new AbortController();
+		thRequest = req;
+		point = p;
+		trailhead = null;
+		thError = null;
+		thLoading = true;
+		setUrl({ th: id, t: null });
+		highlight();
+		if (fly) focusPoint(p);
 		try {
-			const res = await fetch(assetUrl(`/data/trailheads/${id}.json`), { signal: request.signal });
-			if (!res.ok) throw new Error(String(res.status));
-			const data = (await res.json()) as Trailhead;
-			if (request.signal.aborted) return;
+			const data = await loadTrailhead(id, req.signal);
+			if (req.signal.aborted) return;
 			trailhead = data;
-			setUrl(id);
-			if (fly && map) map.flyTo({ center: [data.lng, data.lat], zoom: 13 });
 		} catch {
-			if (request.signal.aborted) return;
-			trailhead = null;
-			error = 'Impossibile caricare questo punto di partenza.';
+			if (req.signal.aborted) return;
+			thError = 'Non riesco a caricare questo punto di partenza. Riprova tra poco.';
 		} finally {
-			if (trailheadRequest === request) {
-				trailheadRequest = null;
-				loading = false;
-				applyFilters();
+			if (thRequest === req) {
+				thRequest = null;
+				thLoading = false;
 			}
 		}
 	}
 
 	function closePanel() {
-		trailheadRequest?.abort();
-		trailheadRequest = null;
-		loading = false;
-		panelOpen = false;
+		thRequest?.abort();
+		thRequest = null;
+		thLoading = false;
+		point = null;
 		trailhead = null;
-		selectedTrailId = null;
-		error = null;
-		setUrl(null);
-		applyFilters();
+		thError = null;
+		setUrl({ th: null, t: null });
+		highlight();
 	}
 
-	function selectTrail(trail: TrailSummary) {
-		selectedTrailId = selectedTrailId === trail.id ? null : trail.id;
-		applyFilters();
-	}
-
-	function addOverlays(m: MlMap) {
-		const firstSymbol = m.getStyle().layers.find((l) => l.type === 'symbol')?.id;
-		const font = ['Noto Sans Bold'];
-
-		m.addSource('trails', { type: 'vector', url: `pmtiles://${absoluteAssetUrl('/tiles/trails.pmtiles')}` });
-		m.addSource('trailheads', {
-			type: 'vector',
-			url: `pmtiles://${absoluteAssetUrl('/tiles/trailheads.pmtiles')}`
-		});
-		m.addSource('huts', { type: 'vector', url: `pmtiles://${absoluteAssetUrl('/tiles/huts.pmtiles')}` });
-
-		const color = difficultyColorExpression as unknown as ExpressionSpecification;
-		const width = (base: number): ExpressionSpecification => [
-			'interpolate',
-			['linear'],
-			['zoom'],
-			8,
-			base * 0.6,
-			12,
-			base * 1.4,
-			15,
-			base * 2.6
-		];
-
-		m.addLayer(
-			{
-				id: 'trails-line',
-				type: 'line',
-				source: 'trails',
-				'source-layer': 'trails',
-				layout: { 'line-join': 'round', 'line-cap': 'round' },
-				paint: { 'line-color': color, 'line-width': width(1.2), 'line-opacity': 0.75 }
-			},
-			firstSymbol
-		);
-		m.addLayer(
-			{
-				id: 'trails-trailhead',
-				type: 'line',
-				source: 'trails',
-				'source-layer': 'trails',
-				filter: NONE,
-				layout: { 'line-join': 'round', 'line-cap': 'round' },
-				paint: { 'line-color': color, 'line-width': width(2.2), 'line-opacity': 1 }
-			},
-			firstSymbol
-		);
-		m.addLayer(
-			{
-				id: 'trails-selected-casing',
-				type: 'line',
-				source: 'trails',
-				'source-layer': 'trails',
-				filter: NONE,
-				layout: { 'line-join': 'round', 'line-cap': 'round' },
-				paint: { 'line-color': '#fde047', 'line-width': width(5) }
-			},
-			firstSymbol
-		);
-		m.addLayer(
-			{
-				id: 'trails-selected',
-				type: 'line',
-				source: 'trails',
-				'source-layer': 'trails',
-				filter: NONE,
-				layout: { 'line-join': 'round', 'line-cap': 'round' },
-				paint: { 'line-color': color, 'line-width': width(2.6) }
-			},
-			firstSymbol
-		);
-		m.addLayer({
-			id: 'trails-ref',
-			type: 'symbol',
-			source: 'trails',
-			'source-layer': 'trails',
-			minzoom: 13,
-			layout: {
-				'symbol-placement': 'line',
-				'text-field': ['get', 'cai_ref'],
-				'text-font': font,
-				'text-size': 11
-			},
-			paint: { 'text-color': '#111827', 'text-halo-color': '#fff', 'text-halo-width': 2 }
-		});
-		m.addLayer({
-			id: 'huts',
-			type: 'circle',
-			source: 'huts',
-			'source-layer': 'huts',
-			minzoom: 10,
-			paint: {
-				'circle-radius': 4,
-				'circle-color': '#92400e',
-				'circle-stroke-color': '#fff',
-				'circle-stroke-width': 1.5
+	async function openTrail(trailId: string) {
+		trailRequest?.abort();
+		const req = new AbortController();
+		trailRequest = req;
+		modalOpen = true;
+		trailLoading = true;
+		trailError = null;
+		trail = null;
+		setUrl({ t: trailId });
+		try {
+			const data = await loadTrail(trailId, req.signal);
+			if (req.signal.aborted) return;
+			trail = data;
+		} catch {
+			if (req.signal.aborted) return;
+			trailError = 'Non riesco a caricare questo sentiero. Riprova tra poco.';
+		} finally {
+			if (trailRequest === req) {
+				trailRequest = null;
+				trailLoading = false;
 			}
-		});
-		m.addLayer({
-			id: 'huts-label',
-			type: 'symbol',
-			source: 'huts',
-			'source-layer': 'huts',
-			minzoom: 13,
-			layout: {
-				'text-field': ['get', 'name'],
-				'text-font': ['Noto Sans Italic'],
-				'text-size': 11,
-				'text-offset': [0, 1.1],
-				'text-anchor': 'top',
-				'text-optional': true
-			},
-			paint: { 'text-color': '#78350f', 'text-halo-color': '#fff', 'text-halo-width': 1.5 }
-		});
+		}
+	}
 
-		const isCluster: ExpressionSpecification = ['has', 'point_count'];
+	function closeModal() {
+		trailRequest?.abort();
+		trailRequest = null;
+		modalOpen = false;
+		trail = null;
+		trailLoading = false;
+		trailError = null;
+		setUrl({ t: null });
+	}
+
+	function onPick(item: SearchItem) {
+		if (item.trailId) {
+			openPoint(item.thId, true).then(() => openTrail(item.trailId!));
+		} else {
+			openPoint(item.thId, true);
+		}
+	}
+
+	function geojson(idx: TrailheadIndex) {
+		return {
+			type: 'FeatureCollection' as const,
+			features: idx.punti.map((p) => ({
+				type: 'Feature' as const,
+				geometry: { type: 'Point' as const, coordinates: [p.lon, p.lat] },
+				properties: { id: p.id, nome: p.nome, tipo: p.tipo, n: p.n_sentieri }
+			}))
+		};
+	}
+
+	function addLayers(m: MlMap, idx: TrailheadIndex) {
+		for (const tipo of TRAILHEAD_TYPES) {
+			const name = `th-${tipo}`;
+			if (!m.hasImage(name)) m.addImage(name, drawMapIcon(iconKind(tipo)), { pixelRatio: 2 });
+		}
+		if (m.getSource(SRC)) return;
+		m.addSource(SRC, {
+			type: 'geojson',
+			data: geojson(idx),
+			cluster: true,
+			clusterRadius: 50,
+			clusterMaxZoom: 12
+		});
+		// cluster a zoom basso
 		m.addLayer({
-			id: 'trailheads-cluster',
+			id: 'th-cluster',
 			type: 'circle',
-			source: 'trailheads',
-			'source-layer': 'trailheads',
-			filter: isCluster,
+			source: SRC,
+			filter: ['has', 'point_count'],
 			paint: {
 				'circle-color': '#14532d',
-				'circle-opacity': 0.9,
-				'circle-stroke-color': '#fff',
-				'circle-stroke-width': 2,
-				'circle-radius': ['interpolate', ['linear'], ['get', 'point_count'], 2, 13, 20, 18, 100, 26]
+				'circle-radius': ['step', ['get', 'point_count'], 18, 10, 24, 50, 30],
+				'circle-stroke-width': 3,
+				'circle-stroke-color': '#ffffff'
 			}
 		});
 		m.addLayer({
-			id: 'trailheads-cluster-count',
+			id: 'th-cluster-count',
 			type: 'symbol',
-			source: 'trailheads',
-			'source-layer': 'trailheads',
-			filter: isCluster,
+			source: SRC,
+			filter: ['has', 'point_count'],
 			layout: {
-				'text-field': ['to-string', ['get', 'point_count']],
-				'text-font': font,
-				'text-size': 12,
+				'text-field': ['get', 'point_count_abbreviated'],
+				'text-font': ['Noto Sans Bold'],
+				'text-size': 14,
 				'text-allow-overlap': true
 			},
-			paint: { 'text-color': '#fff' }
+			paint: { 'text-color': '#ffffff' }
 		});
+		// anello di selezione
 		m.addLayer({
-			id: 'trailheads-point',
+			id: 'th-selected',
 			type: 'circle',
-			source: 'trailheads',
-			'source-layer': 'trailheads',
-			filter: ['!', isCluster],
+			source: SRC,
+			filter: ['==', ['get', 'id'], ''],
 			paint: {
-				'circle-color': '#fff',
-				'circle-stroke-color': '#14532d',
-				'circle-stroke-width': 3,
-				'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 5, 14, 9]
+				'circle-radius': 26,
+				'circle-color': '#fde047',
+				'circle-opacity': 0.55,
+				'circle-stroke-color': '#f59e0b',
+				'circle-stroke-width': 3
 			}
 		});
 		m.addLayer({
-			id: 'trailheads-selected',
-			type: 'circle',
-			source: 'trailheads',
-			'source-layer': 'trailheads',
-			filter: NONE,
-			paint: {
-				'circle-color': '#14532d',
-				'circle-stroke-color': '#fde047',
-				'circle-stroke-width': 4,
-				'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 7, 14, 11]
-			}
-		});
-		m.addLayer({
-			id: 'trailheads-label',
+			id: 'th-point',
 			type: 'symbol',
-			source: 'trailheads',
-			'source-layer': 'trailheads',
-			filter: ['!', isCluster],
-			minzoom: 12,
+			source: SRC,
+			filter: ['!', ['has', 'point_count']],
 			layout: {
-				'text-field': ['get', 'name'],
-				'text-font': font,
-				'text-size': 12,
-				'text-offset': [0, 1.2],
-				'text-anchor': 'top',
-				'text-optional': true
-			},
-			paint: { 'text-color': '#14532d', 'text-halo-color': '#fff', 'text-halo-width': 2 }
+				'icon-image': ['concat', 'th-', ['get', 'tipo']],
+				'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.75, 14, 1],
+				'icon-allow-overlap': true
+			}
 		});
-		applyFilters();
+		// nomi in un layer separato: se i font non si caricano, le icone restano visibili
+		m.addLayer({
+			id: 'th-label',
+			type: 'symbol',
+			source: SRC,
+			minzoom: 12,
+			filter: ['!', ['has', 'point_count']],
+			layout: {
+				'text-field': ['get', 'nome'],
+				'text-font': ['Noto Sans Bold'],
+				'text-size': 12,
+				'text-offset': [0, 1.5],
+				'text-anchor': 'top',
+				'text-optional': true,
+				'text-max-width': 9
+			},
+			paint: { 'text-color': '#111827', 'text-halo-color': '#ffffff', 'text-halo-width': 1.8 }
+		});
+		highlight();
 	}
 
-	function featureId(f: MapGeoJSONFeature): number {
-		return Number(f.properties.id);
+	function fit(m: MlMap, idx: TrailheadIndex | null, animate = false) {
+		const pts = idx?.punti ?? [];
+		let b: [number, number, number, number] | null = null;
+		if (pts.length > 1) {
+			const bb = new LngLatBounds([pts[0].lon, pts[0].lat], [pts[0].lon, pts[0].lat]);
+			for (const p of pts) bb.extend([p.lon, p.lat]);
+			b = [bb.getWest(), bb.getSouth(), bb.getEast(), bb.getNorth()];
+		} else if (idx?.area?.bbox) b = idx.area.bbox;
+		m.fitBounds(b ?? PILOT_BOUNDS, { padding: 60, maxZoom: 13, animate });
 	}
 
 	onMount(() => {
 		initMapLibre();
 		let disposed = false;
-		const initialTh = Number(new URL(location.href).searchParams.get('th')) || null;
+		const params = new URL(location.href).searchParams;
+		const initialTh = params.get('th');
+		const initialT = params.get('t');
 
-		resolveStyleUrl().then((style) => {
+		const indexPromise = loadIndex().catch(() => {
+			indexError = 'Non riesco a caricare i punti di partenza.';
+			return null;
+		});
+
+		Promise.all([resolveStyleUrl(), indexPromise]).then(([style, idx]) => {
 			if (disposed) return;
+			index = idx;
 			const m = new MlMap({
 				container,
 				style,
-				bounds: LOMBARDIA_BOUNDS,
-				fitBoundsOptions: { padding: 20 },
-				maxBounds: [5.5, 43.5, 14.5, 48],
-				attributionControl: false
+				bounds: idx?.area?.bbox ?? PILOT_BOUNDS,
+				fitBoundsOptions: { padding: 40 },
+				attributionControl: false,
+				dragRotate: false,
+				pitchWithRotate: false
 			});
 			map = m;
-			m.addControl(new AttributionControl({ compact: true, customAttribution: DATA_ATTRIBUTION }));
+			m.touchZoomRotate.disableRotation();
+			m.addControl(new AttributionControl({ compact: true, customAttribution: 'Quote: Copernicus DEM' }));
 			m.addControl(new NavigationControl({ showCompass: false }), 'top-right');
 			m.addControl(
 				new GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: false }),
 				'top-right'
 			);
 
-			m.on('style.load', () => addOverlays(m));
-			m.on('load', () => {
-				if (initialTh) openTrailhead(initialTh, true);
-			});
+			if (idx) {
+				const setup = () => addLayers(m, idx);
+				m.on('style.load', setup);
+				if (initialTh) {
+					openPoint(initialTh, false).then(() => {
+						if (initialT) openTrail(initialT);
+					});
+				} else if (initialT) openTrail(initialT);
+			}
 
-			m.on('click', 'trailheads-cluster', (e: MapLayerMouseEvent) => {
-				m.easeTo({ center: e.lngLat, zoom: Math.min(m.getZoom() + 2, 14) });
+			m.on('click', 'th-cluster', async (e: MapLayerMouseEvent) => {
+				const f = e.features?.[0] as MapGeoJSONFeature | undefined;
+				if (!f) return;
+				const src = m.getSource(SRC) as GeoJSONSource;
+				const zoom = await src.getClusterExpansionZoom(f.properties.cluster_id as number);
+				m.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom: zoom + 0.5 });
 			});
-			m.on('click', 'trailheads-point', (e: MapLayerMouseEvent) => {
+			m.on('click', 'th-point', (e: MapLayerMouseEvent) => {
 				const f = e.features?.[0];
-				if (f) openTrailhead(featureId(f));
+				if (f) openPoint(String(f.properties.id), false);
 			});
-			m.on('click', (e) => {
-				const hits = m.queryRenderedFeatures(e.point, {
-					layers: ['trailheads-cluster', 'trailheads-point']
-				});
-				if (hits.length || !trailhead) return;
-				const lines = m.queryRenderedFeatures(
-					[
-						[e.point.x - 6, e.point.y - 6],
-						[e.point.x + 6, e.point.y + 6]
-					],
-					{ layers: ['trails-trailhead'] }
-				);
-				if (lines.length) {
-					const id = featureId(lines[0]);
-					const trail = trailhead.trails.find((t) => t.id === id);
-					if (trail) selectTrail(trail);
-				}
-			});
-			for (const layer of ['trailheads-cluster', 'trailheads-point', 'trails-trailhead']) {
+			for (const layer of ['th-cluster', 'th-point']) {
 				m.on('mouseenter', layer, () => (m.getCanvas().style.cursor = 'pointer'));
 				m.on('mouseleave', layer, () => (m.getCanvas().style.cursor = ''));
 			}
 		});
 
+		// Ricerca: carica in background i file dei punti (pochi nel pilota) + indice opzionale
+		indexPromise.then(async (idx) => {
+			if (!idx || disposed) return;
+			searchItems = buildSearchItems(idx, []);
+			const [extra, ths] = await Promise.all([
+				loadSearchExtra(),
+				Promise.all(idx.punti.slice(0, 120).map((p) => loadTrailhead(p.id).catch(() => null)))
+			]);
+			if (disposed) return;
+			searchItems = buildSearchItems(
+				idx,
+				ths.filter((t): t is Trailhead => !!t),
+				extra
+			);
+		});
+
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && panelOpen) closePanel();
+			if (e.key === 'Escape' && !modalOpen && point) closePanel();
 		};
 		window.addEventListener('keydown', onKey);
 		return () => {
@@ -363,38 +343,52 @@
 </script>
 
 <svelte:head>
-	<title>Trail Explorer — sentieri della Lombardia</title>
+	<title>hikeups — punti di partenza dei sentieri</title>
 	<meta
 		name="description"
-		content="Scegli un punto di partenza e scopri tutti i sentieri CAI che partono da lì: difficoltà, lunghezza, dislivello, tempo e GPX."
+		content="Scegli un punto di partenza e scopri i sentieri CAI che partono da lì: difficoltà, durata, km, dislivello e scheda PDF."
 	/>
-	<meta property="og:title" content="Trail Explorer — sentieri della Lombardia" />
+	<meta property="og:title" content="hikeups — punti di partenza dei sentieri" />
 	<meta property="og:type" content="website" />
 </svelte:head>
 
-<main class="app">
-	<h1 class="visually-hidden">Trail Explorer — mappa dei sentieri della Lombardia</h1>
-	<div class="map" bind:this={container} role="region" aria-label="Mappa dei sentieri"></div>
+<main class="app" class:open={!!point}>
+	<h1 class="visually-hidden">hikeups — mappa dei punti di partenza dei sentieri</h1>
+	<div class="map" bind:this={container} role="region" aria-label="Mappa dei punti di partenza"></div>
 
-	{#if !panelOpen}
+	<div class="top">
+		<SearchBar items={searchItems} onpick={onPick} />
+	</div>
+
+	{#if !point}
 		<div class="hint" role="note">
-			<strong>Trail Explorer</strong>
-			<span>Tocca un punto di partenza <span class="dot" aria-hidden="true"></span> per vedere i sentieri.</span>
+			{#if indexError}
+				<span class="bad">{indexError}</span>
+			{:else}
+				<strong>{index?.area?.nome ?? 'hikeups'}</strong>
+				<span>Tocca un punto di partenza per vedere i sentieri che partono da lì.</span>
+				{#if index?.esempio}
+					<span class="demo">Dati di esempio: non sono sentieri reali.</span>
+				{/if}
+			{/if}
 		</div>
+		<ul class="legend" aria-label="Tipi di punto di partenza">
+			{#each TRAILHEAD_TYPES as t (t)}
+				<li><TypeIcon kind={t} size={18} filled /> {TYPE_LABELS[t]}</li>
+			{/each}
+		</ul>
 	{/if}
 
-	<details class="legend">
-		<summary>Legenda</summary>
-		<ul>
-			{#each ['T', 'E', 'EE', 'EEA', '?'] as const as d (d)}
-				<li><span class="swatch" style:background={DIFFICULTY_COLORS[d]}></span>{d} — {DIFFICULTY_LABELS[d]}</li>
-			{/each}
-			<li><span class="hut" aria-hidden="true"></span>Rifugio / bivacco</li>
-		</ul>
-	</details>
+	{#if point}
+		<TrailheadPanel {point} {trailhead} loading={thLoading} error={thError} onselect={(s: TrailListItem) => openTrail(s.id)} onclose={closePanel} />
+	{/if}
 
-	{#if panelOpen}
-		<TrailheadPanel {trailhead} {loading} {error} {selectedTrailId} onselect={selectTrail} onclose={closePanel} />
+	<footer class="credits">
+		{#each ATTRIBUTIONS as a, i (a.label)}<a href={a.href} target="_blank" rel="noopener">{a.label}</a>{i < ATTRIBUTIONS.length - 1 ? ' · ' : ''}{/each}
+	</footer>
+
+	{#if modalOpen}
+		<TrailModal {trail} loading={trailLoading} error={trailError} onclose={closeModal} onopentrail={openTrail} />
 	{/if}
 </main>
 
@@ -402,60 +396,59 @@
 	.app {
 		position: fixed;
 		inset: 0;
+		--credits-h: 24px;
 	}
 	.map {
 		position: absolute;
-		inset: 0;
+		inset: 0 0 var(--credits-h) 0;
+	}
+	.top {
+		position: absolute;
+		z-index: 4;
+		top: 10px;
+		left: 10px;
+		right: 60px;
+		max-width: 420px;
 	}
 	.hint {
 		position: absolute;
 		z-index: 1;
-		left: 12px;
-		top: 12px;
-		max-width: calc(100% - 80px);
+		left: 10px;
+		top: 68px;
+		max-width: min(340px, calc(100% - 80px));
 		background: #fff;
-		padding: 0.6rem 0.8rem;
+		padding: 0.55rem 0.8rem;
 		border-radius: 10px;
 		box-shadow: 0 2px 10px rgb(0 0 0 / 0.15);
 		display: flex;
 		flex-direction: column;
 		gap: 0.15rem;
-		font-size: 0.9rem;
+		font-size: 0.88rem;
 	}
 	.hint strong {
 		color: var(--green-900);
 		font-size: 1rem;
 	}
-	.dot {
-		display: inline-block;
-		width: 12px;
-		height: 12px;
-		border-radius: 50%;
-		border: 3px solid #14532d;
-		background: #fff;
-		vertical-align: -1px;
+	.demo {
+		color: #92400e;
+		font-weight: 600;
+	}
+	.bad {
+		color: #b91c1c;
 	}
 	.legend {
 		position: absolute;
 		z-index: 1;
-		right: 10px;
-		bottom: 34px;
-		background: #fff;
-		border-radius: 8px;
-		box-shadow: 0 2px 10px rgb(0 0 0 / 0.15);
-		padding: 0.4rem 0.7rem;
-		font-size: 0.85rem;
-	}
-	.legend summary {
-		cursor: pointer;
-		font-weight: 600;
-		min-height: 28px;
-		line-height: 28px;
-	}
-	.legend ul {
+		left: 10px;
+		bottom: calc(var(--credits-h) + 10px);
+		margin: 0;
+		padding: 0.4rem 0.6rem;
 		list-style: none;
-		margin: 0.3rem 0 0;
-		padding: 0;
+		background: #fff;
+		border-radius: 10px;
+		box-shadow: 0 2px 10px rgb(0 0 0 / 0.15);
+		font-size: 0.78rem;
+		display: none;
 	}
 	.legend li {
 		display: flex;
@@ -463,22 +456,44 @@
 		gap: 0.4rem;
 		padding: 0.1rem 0;
 	}
-	.swatch {
-		width: 18px;
-		height: 4px;
-		border-radius: 2px;
+	.credits {
+		position: absolute;
+		z-index: 5;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: var(--credits-h);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.2rem;
+		background: #fff;
+		border-top: 1px solid var(--line);
+		font-size: 0.72rem;
+		color: var(--muted);
+		padding-bottom: env(safe-area-inset-bottom);
+		box-sizing: content-box;
 	}
-	.hut {
-		width: 9px;
-		height: 9px;
-		border-radius: 50%;
-		background: #92400e;
-		margin: 0 4px;
+	.credits a {
+		color: var(--muted);
 	}
-	@media (max-width: 767px) {
+	:global(.maplibregl-ctrl-bottom-right),
+	:global(.maplibregl-ctrl-bottom-left) {
+		z-index: 1;
+	}
+	@media (min-width: 768px) {
 		.legend {
-			bottom: auto;
-			top: 120px;
+			display: block;
+		}
+		.top {
+			width: 380px;
+			right: auto;
+		}
+		.hint {
+			top: 72px;
+		}
+		.app.open :global(.maplibregl-ctrl-top-right) {
+			z-index: 1;
 		}
 	}
 </style>
